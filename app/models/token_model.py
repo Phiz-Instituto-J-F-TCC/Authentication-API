@@ -10,15 +10,20 @@ def find_aluno_by_email(cur, email: str):
     return cur.fetchone()
 
 
-def insert_token(cur, token: str, email: str, numero_celular: str, expira_em: datetime):
+def insert_token(cur, token: str, email: str, numero_celular: str, expira_em: datetime)-> int:
     """Insere um novo token de autenticação."""
     cur.execute(
-        """
-        INSERT INTO "Token_Autenticacao" ("token", "email", "numero_celular", "expira_em")
-        VALUES (%s, %s, %s, %s)
-        """,
+        'INSERT INTO "Token_Autenticacao" ("token", "email", "numero_celular", "expira_em") VALUES (%s, %s, %s, %s) RETURNING "id"',
         (token, email, numero_celular, expira_em),
     )
+    return cur.fetchone()[0]
+
+def find_authentication_status(cur, email: str, numero_celular: str):
+    """Buscar o status de uma solicitação sem expor o token de confirmação"""
+    cur.execute('SELECT utilizado FROM "Token_Autenticacao" WHERE email = %s AND numero_celular = %s ORDER BY criado_em DESC LIMIT 1', (email, numero_celular))
+    
+    result = cur.fetchone()
+    return result
 
 
 def find_token(cur, token: str):

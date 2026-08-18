@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from app.config import BASE_URL, TOKEN_EXPIRY_MINUTES
 from app.database import get_db
 from app.models.token_model import (
+    find_authentication_status,
     find_aluno_by_email,
     find_token,
     insert_token,
@@ -39,20 +40,36 @@ def create_authentication(email: str, numero_celular: str) -> dict:
         expira_em = datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRY_MINUTES)
 
         # 3. Salvar token no banco
-        insert_token(cur, token, email, numero_celular, expira_em)
+        authentication_id = insert_token(cur, token, email, numero_celular, expira_em)
         conn.commit()
 
         # 4. Montar link e enviar e-mail
         link = f"{BASE_URL}/finish_authentication?token={token}"
         send_auth_email(email, link)
 
-        return {"message": "E-mail de autenticação enviado com sucesso."}
+        return {"message": "E-mail de autenticação enviado com sucesso.",
+                "authentication_id": authentication_id
+                }
 
     except AuthError:
         raise
     except Exception as e:
         conn.rollback()
         raise AuthError(500, f"Erro interno: {str(e)}")
+    finally:
+        conn.close()
+
+def get_authentication_status(email: str, numero_celular: str) -> dict:
+    """
+    Retorna se a solicitação indicada já foi confirmada pelo link enviado por e-mail
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        row = find_authentication_status(cur, email, numero_celular)
+        if not row:
+            raise AuthError(404, "Solicitação de autenticação não encontrada.")
+        return{"verified": row[0]}
     finally:
         conn.close()
 

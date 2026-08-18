@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 
 from app.schemas.auth_schema import AuthRequest
-from app.services.auth_service import AuthError, create_authentication, validate_and_finish
+from app.services.auth_service import AuthError, create_authentication, get_authentication_status, validate_and_finish
 from app.views.templates import error_page, success_page
 
 router = APIRouter()
@@ -35,3 +35,11 @@ def finish_authentication(token: str):
         return success_page(result["email"])
     else:
         return error_page(result["title"], result["message"])
+
+@router.get("/authentication_status")
+def authentication_status(email:str, numero_celular:str):
+    """ Informa ao MiniApp se a solicitação já foi confirmada pelo link enviado por e-mail"""
+    try:
+        return get_authentication_status(email, numero_celular)
+    except AuthError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
