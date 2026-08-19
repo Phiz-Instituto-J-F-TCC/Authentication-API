@@ -1,17 +1,24 @@
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from app.config import BASE_URL, TOKEN_EXPIRY_MINUTES
 from app.database import get_db
 from app.models.token_model import (
+    find_authentication_for_resend,
     find_authentication_status,
     find_aluno_by_email,
     find_token,
     insert_token,
     mark_token_as_used,
+    renew_token,
     update_aluno_numero_phiz,
 )
 from app.services.email_service import send_auth_email
+from app.services.phiz_phone_service import PhoneResolutionError, resolve_phone_number
+
+
+RESEND_COOLDOWN_SECONDS = 30
 
 
 class AuthError(Exception):
@@ -21,10 +28,10 @@ class AuthError(Exception):
         self.detail = detail
 
 
-def create_authentication(email: str, numero_celular: str) -> dict:
+def create_authentication(email: str, phone_code: str) -> dict:
     """
     Lógica de negócio do POST /authenticate.
-    Valida o aluno, gera token, salva no banco e envia o e-mail.
+    Valida o aluno, resolve o telefone no Phiz, salva no banco e envia o e-mail.
     """
     conn = get_db()
     try:
@@ -35,41 +42,107 @@ def create_authentication(email: str, numero_celular: str) -> dict:
         if not aluno:
             raise AuthError(404, "Aluno não encontrado ou inativo.")
 
-        # 2. Gerar token seguro
+        # 2. Resolver o código do Phiz somente no servidor
+        numero_celular = resolve_phone_number(phone_code)
+
+        # 3. Gerar tokens seguros
         token = secrets.token_urlsafe(48)
+        polling_token = secrets.token_urlsafe(32)
         expira_em = datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRY_MINUTES)
 
-        # 3. Salvar token no banco
-        authentication_id = insert_token(cur, token, email, numero_celular, expira_em)
-        conn.commit()
-
-        # 4. Montar link e enviar e-mail
+        # 4. Salvar tokens e telefone resolvido no banco
+        authentication_id = insert_token(
+            cur,
+            token,
+            polling_token,
+            email,
+            numero_celular,
+            expira_em,
+        )
+        # 5. Montar link e enviar e-mail
         link = f"{BASE_URL}/finish_authentication?token={token}"
         send_auth_email(email, link)
+        conn.commit()
 
         return {"message": "E-mail de autenticação enviado com sucesso.",
-                "authentication_id": authentication_id
+                "authentication_id": authentication_id,
+                "polling_token": polling_token,
                 }
 
+    except PhoneResolutionError as e:
+        conn.rollback()
+        raise AuthError(e.status_code, e.detail)
     except AuthError:
         raise
-    except Exception as e:
+    except Exception:
         conn.rollback()
-        raise AuthError(500, f"Erro interno: {str(e)}")
+        raise AuthError(500, "Não foi possível criar a solicitação de autenticação.")
     finally:
         conn.close()
 
-def get_authentication_status(email: str, numero_celular: str) -> dict:
+
+def get_authentication_status(polling_token: Optional[str]) -> dict:
     """
     Retorna se a solicitação indicada já foi confirmada pelo link enviado por e-mail
     """
+    if not polling_token:
+        raise AuthError(401, "Sessão de autenticação inválida.")
+
     conn = get_db()
     try:
         cur = conn.cursor()
-        row = find_authentication_status(cur, email, numero_celular)
+        row = find_authentication_status(cur, polling_token)
         if not row:
             raise AuthError(404, "Solicitação de autenticação não encontrada.")
-        return{"verified": row[0]}
+        utilizado, expira_em = row
+        if utilizado:
+            return {"verified": True}
+
+        if expira_em.tzinfo is None:
+            expira_em = expira_em.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expira_em:
+            raise AuthError(410, "Solicitação de autenticação expirada.")
+
+        return {"verified": False}
+    finally:
+        conn.close()
+
+
+def resend_authentication(polling_token: Optional[str]) -> dict:
+    """Reenvia o link usando a solicitação já autorizada pelo MiniApp."""
+    if not polling_token:
+        raise AuthError(401, "Sessão de autenticação inválida.")
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        row = find_authentication_for_resend(cur, polling_token)
+        if not row:
+            raise AuthError(404, "Solicitação de autenticação não encontrada.")
+
+        token_id, email, utilizado, criado_em = row
+        if utilizado:
+            raise AuthError(409, "A autenticação já foi concluída.")
+
+        if criado_em.tzinfo is None:
+            criado_em = criado_em.replace(tzinfo=timezone.utc)
+        elapsed_seconds = (datetime.now(timezone.utc) - criado_em).total_seconds()
+        if elapsed_seconds < RESEND_COOLDOWN_SECONDS:
+            raise AuthError(429, "Aguarde antes de solicitar outro e-mail.")
+
+        token = secrets.token_urlsafe(48)
+        expira_em = datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRY_MINUTES)
+        renew_token(cur, token_id, token, expira_em)
+
+        link = f"{BASE_URL}/finish_authentication?token={token}"
+        send_auth_email(email, link)
+        conn.commit()
+        return {"message": "E-mail de autenticação reenviado com sucesso."}
+    except AuthError:
+        raise
+    except Exception:
+        conn.rollback()
+        raise AuthError(500, "Não foi possível reenviar o e-mail de autenticação.")
     finally:
         conn.close()
 
