@@ -2,12 +2,13 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from typing import Optional
 
-from app.schemas.auth_schema import AuthRequest
+from app.schemas.auth_schema import AuthRequest, AuthenticationEmailStatusRequest
 from app.services.auth_service import (
     AuthError,
     create_authentication,
     get_authentication_status,
     resend_authentication,
+    validate_authentication_email,
     validate_and_finish,
 )
 from app.views.templates import error_page, success_page
@@ -25,6 +26,15 @@ def authenticate(payload: AuthRequest):
     try:
         result = create_authentication(payload.email, payload.phone_code)
         return result
+    except AuthError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.post("/authentication_email_status")
+def authentication_email_status(payload: AuthenticationEmailStatusRequest):
+    """Valida o e-mail antes de o MiniApp solicitar o telefone pelo Phiz."""
+    try:
+        return validate_authentication_email(payload.email)
     except AuthError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
@@ -69,4 +79,3 @@ def authentication_resend(
         return resend_authentication(x_authentication_polling_token)
     except AuthError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
-

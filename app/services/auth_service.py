@@ -28,6 +28,23 @@ class AuthError(Exception):
         self.detail = detail
 
 
+def validate_authentication_email(email: str) -> dict:
+    """Confirma se o e-mail pertence a um aluno ativo antes de pedir o telefone."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        aluno = find_aluno_by_email(cur, email)
+        if not aluno:
+            raise AuthError(404, "E-mail não encontrado ou está inativo.")
+        return {"eligible": True}
+    except AuthError:
+        raise
+    except Exception:
+        raise AuthError(500, "Não foi possível validar o e-mail.")
+    finally:
+        conn.close()
+
+
 def create_authentication(email: str, phone_code: str) -> dict:
     """
     Lógica de negócio do POST /authenticate.
