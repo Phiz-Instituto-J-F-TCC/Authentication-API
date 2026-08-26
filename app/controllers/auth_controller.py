@@ -19,12 +19,12 @@ router = APIRouter()
 @router.post("/authenticate")
 def authenticate(payload: AuthRequest):
     """
-    Recebe e-mail + código temporário emitido pelo Phiz.
-    Verifica se o email existe na tabela Aluno,
-    gera um token seguro, salva no banco e envia o link por e-mail.
+    Inicia a confirmação do número informado pelo usuário.
+    O telefone não é devolvido na resposta; o MiniApp recebe somente um token
+    opaco para acompanhar a confirmação.
     """
     try:
-        result = create_authentication(payload.email, payload.phone_code)
+        result = create_authentication(payload.email, payload.phone_number)
         return result
     except AuthError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
@@ -32,7 +32,7 @@ def authenticate(payload: AuthRequest):
 
 @router.post("/authentication_email_status")
 def authentication_email_status(payload: AuthenticationEmailStatusRequest):
-    """Valida o e-mail antes de o MiniApp solicitar o telefone pelo Phiz."""
+    """Valida o e-mail antes de o MiniApp receber o telefone informado."""
     try:
         return validate_authentication_email(payload.email)
     except AuthError as e:

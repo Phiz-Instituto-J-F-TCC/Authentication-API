@@ -15,7 +15,6 @@ from app.models.token_model import (
     update_aluno_numero_phiz,
 )
 from app.services.email_service import send_auth_email
-from app.services.phiz_phone_service import PhoneResolutionError, resolve_phone_number
 
 
 RESEND_COOLDOWN_SECONDS = 30
@@ -45,55 +44,51 @@ def validate_authentication_email(email: str) -> dict:
         conn.close()
 
 
-def create_authentication(email: str, phone_code: str) -> dict:
-    """
-    Lógica de negócio do POST /authenticate.
-    Valida o aluno, resolve o telefone no Phiz, salva no banco e envia o e-mail.
-    """
+def create_authentication(email: str, phone_number: str) -> dict:
+    normalized_email = email.strip().lower()
+    normalized_phone_number = "".join(
+        character for character in phone_number if "0" <= character <= "9"
+    )
+
+    if not normalized_email:
+        raise AuthError(422, "E-mail é obrigatório.")
+
+    if (
+        len(normalized_phone_number) != 11
+        or normalized_phone_number[0] == "0"
+        or normalized_phone_number[2] != "9"
+    ):
+        raise AuthError(422, "Digite um número de celular válido com DDD.")
+
     conn = get_db()
     try:
         cur = conn.cursor()
-
-        # 1. Verificar se o aluno existe
-        aluno = find_aluno_by_email(cur, email)
+        aluno = find_aluno_by_email(cur, normalized_email)
         if not aluno:
-            raise AuthError(404, "Aluno não encontrado ou inativo.")
+            raise AuthError(404, "E-mail não encontrado ou está inativo.")
 
-        # 2. Resolver o código do Phiz somente no servidor
-        numero_celular = resolve_phone_number(phone_code)
-
-        # 3. Gerar tokens seguros
-        token = secrets.token_urlsafe(48)
-        polling_token = secrets.token_urlsafe(32)
+        confirmation_token = secrets.token_urlsafe(48)
+        polling_token = secrets.token_urlsafe(48)
         expira_em = datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRY_MINUTES)
-
-        # 4. Salvar tokens e telefone resolvido no banco
-        authentication_id = insert_token(
+        insert_token(
             cur,
-            token,
+            confirmation_token,
             polling_token,
-            email,
-            numero_celular,
+            normalized_email,
+            normalized_phone_number,
             expira_em,
         )
-        # 5. Montar link e enviar e-mail
-        link = f"{BASE_URL}/finish_authentication?token={token}"
-        send_auth_email(email, link)
+
+        link = f"{BASE_URL}/finish_authentication?token={confirmation_token}"
+        send_auth_email(normalized_email, link)
         conn.commit()
-
-        return {"message": "E-mail de autenticação enviado com sucesso.",
-                "authentication_id": authentication_id,
-                "polling_token": polling_token,
-                }
-
-    except PhoneResolutionError as e:
-        conn.rollback()
-        raise AuthError(e.status_code, e.detail)
+        return {"polling_token": polling_token}
     except AuthError:
+        conn.rollback()
         raise
     except Exception:
         conn.rollback()
-        raise AuthError(500, "Não foi possível criar a solicitação de autenticação.")
+        raise AuthError(500, "Não foi possível iniciar a confirmação. Tente novamente.")
     finally:
         conn.close()
 
