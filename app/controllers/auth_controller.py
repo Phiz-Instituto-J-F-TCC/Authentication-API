@@ -19,12 +19,11 @@ router = APIRouter()
 @router.post("/authenticate")
 def authenticate(payload: AuthRequest):
     """
-    Inicia a confirmação do número informado pelo usuário.
-    O telefone não é devolvido na resposta; o MiniApp recebe somente um token
-    opaco para acompanhar a confirmação.
+    Recebe o Phiz ID do usuário e inicia a confirmação do vínculo.
+    O MiniApp recebe somente um token opaco para acompanhar a confirmação.
     """
     try:
-        result = create_authentication(payload.email, payload.phone_number)
+        result = create_authentication(payload.email, payload.phiz_id)
         return result
     except AuthError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
@@ -32,7 +31,7 @@ def authenticate(payload: AuthRequest):
 
 @router.post("/authentication_email_status")
 def authentication_email_status(payload: AuthenticationEmailStatusRequest):
-    """Valida o e-mail antes de o MiniApp receber o telefone informado."""
+    """Valida o e-mail antes de o MiniApp iniciar a vinculação no Phiz."""
     try:
         return validate_authentication_email(payload.email)
     except AuthError as e:
@@ -43,7 +42,7 @@ def authentication_email_status(payload: AuthenticationEmailStatusRequest):
 def finish_authentication(token: str):
     """
     Recebe o token via query parameter,
-    valida e — se válido — atualiza o numero_phiz do Aluno.
+    valida e — se válido — atualiza o Phiz ID do aluno.
     Retorna uma página HTML de confirmação ou erro.
     """
     result = validate_and_finish(token)
@@ -74,7 +73,7 @@ def authentication_resend(
         alias="X-Authentication-Polling-Token",
     ),
 ):
-    """Reenvia o link sem reenviar ou expor o telefone ao MiniApp."""
+    """Reenvia o link sem expor a identidade vinculada ao MiniApp."""
     try:
         return resend_authentication(x_authentication_polling_token)
     except AuthError as e:

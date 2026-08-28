@@ -4,7 +4,7 @@ from pydantic import BaseModel
 class AuthRequest(BaseModel):
     """Dados necessários para iniciar a confirmação da vinculação."""
     email: str
-    phone_number: str
+    phiz_id: str
 
 
 class AuthenticationEmailStatusRequest(BaseModel):

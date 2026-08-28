@@ -12,7 +12,7 @@ from app.models.token_model import (
     insert_token,
     mark_token_as_used,
     renew_token,
-    update_aluno_numero_phiz,
+    update_aluno_phiz_id,
 )
 from app.services.email_service import send_auth_email
 
@@ -28,7 +28,7 @@ class AuthError(Exception):
 
 
 def validate_authentication_email(email: str) -> dict:
-    """Confirma se o e-mail pertence a um aluno ativo antes de pedir o telefone."""
+    """Confirma se o e-mail pertence a um aluno ativo antes da vinculação."""
     conn = get_db()
     try:
         cur = conn.cursor()
@@ -44,21 +44,17 @@ def validate_authentication_email(email: str) -> dict:
         conn.close()
 
 
-def create_authentication(email: str, phone_number: str) -> dict:
+def create_authentication(email: str, phiz_id: str) -> dict:
     normalized_email = email.strip().lower()
-    normalized_phone_number = "".join(
-        character for character in phone_number if "0" <= character <= "9"
-    )
+    normalized_phiz_id = phiz_id.strip() if isinstance(phiz_id, str) else ""
 
     if not normalized_email:
         raise AuthError(422, "E-mail é obrigatório.")
 
-    if (
-        len(normalized_phone_number) != 11
-        or normalized_phone_number[0] == "0"
-        or normalized_phone_number[2] != "9"
-    ):
-        raise AuthError(422, "Digite um número de celular válido com DDD.")
+    if not normalized_phiz_id:
+        raise AuthError(422, "Phiz ID inválido.")
+
+    validate_authentication_email(normalized_email)
 
     conn = get_db()
     try:
@@ -75,7 +71,7 @@ def create_authentication(email: str, phone_number: str) -> dict:
             confirmation_token,
             polling_token,
             normalized_email,
-            normalized_phone_number,
+            normalized_phiz_id,
             expira_em,
         )
 
@@ -162,7 +158,7 @@ def resend_authentication(polling_token: Optional[str]) -> dict:
 def validate_and_finish(token_value: str) -> dict:
     """
     Lógica de negócio do GET /finish_authentication.
-    Valida o token e atualiza o numero_phiz do aluno.
+    Valida o token e atualiza o Phiz ID do aluno.
     Retorna um dict com 'success', 'title', 'message' e 'email'.
     """
     conn = get_db()
@@ -178,7 +174,7 @@ def validate_and_finish(token_value: str) -> dict:
                 "message": "O link que você usou é inválido ou não existe.",
             }
 
-        token_id, email, numero_celular, expira_em, utilizado = row
+        token_id, email, phiz_id, expira_em, utilizado = row
 
         # 2. Verificar se já foi utilizado
         if utilizado:
@@ -199,8 +195,15 @@ def validate_and_finish(token_value: str) -> dict:
                 "message": "Este link expirou. Solicite um novo link de autenticação.",
             }
 
-        # 4. Atualizar numero_phiz na tabela Aluno
-        update_aluno_numero_phiz(cur, email, numero_celular)
+        if not phiz_id:
+            return {
+                "success": False,
+                "title": "Solicitação desatualizada",
+                "message": "Este link foi gerado pelo fluxo anterior. Inicie uma nova vinculação.",
+            }
+
+        # 4. Atualizar Phiz ID na tabela Aluno
+        update_aluno_phiz_id(cur, email, phiz_id)
 
         # 5. Marcar token como utilizado
         mark_token_as_used(cur, token_id)
@@ -210,16 +213,16 @@ def validate_and_finish(token_value: str) -> dict:
         return {
             "success": True,
             "title": "Conexão Confirmada!",
-            "message": "Seu número de celular foi vinculado com sucesso.",
+            "message": "Seu Phiz ID foi vinculado com sucesso.",
             "email": email,
         }
 
-    except Exception as e:
+    except Exception:
         conn.rollback()
         return {
             "success": False,
             "title": "Erro interno",
-            "message": f"Ocorreu um erro inesperado: {str(e)}",
+            "message": "Ocorreu um erro inesperado. Tente novamente.",
         }
     finally:
         conn.close()
