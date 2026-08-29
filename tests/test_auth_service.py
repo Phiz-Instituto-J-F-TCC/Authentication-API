@@ -57,6 +57,29 @@ class AuthenticationServiceTests(unittest.TestCase):
         send_auth_email.assert_called_once()
         connection.commit.assert_called_once()
 
+    def test_should_report_the_email_stage_when_email_delivery_fails(self):
+        connection = FakeConnection()
+
+        with patch.object(
+            auth_service, "validate_authentication_email", return_value={"eligible": True}
+        ), patch.object(auth_service, "get_db", return_value=connection), patch.object(
+            auth_service, "find_aluno_by_email", return_value=(1,)
+        ), patch.object(auth_service, "insert_token"), patch.object(
+            auth_service, "send_auth_email", side_effect=TimeoutError
+        ):
+            with self.assertLogs(auth_service.logger, level="ERROR") as logs, self.assertRaises(
+                auth_service.AuthError
+            ) as error:
+                auth_service.create_authentication("student@example.com", "phiz-user-id")
+
+        self.assertEqual(error.exception.status_code, 500)
+        self.assertIn(
+            "authentication_failed stage=send_email error_type=TimeoutError",
+            logs.output[0],
+        )
+        connection.rollback.assert_called_once()
+        connection.close.assert_called_once()
+
     def test_should_reject_a_missing_phiz_id_before_accessing_the_database(self):
         with patch.object(auth_service, "get_db") as get_db:
             with self.assertRaises(auth_service.AuthError) as error:

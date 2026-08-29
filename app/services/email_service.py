@@ -1,4 +1,5 @@
 import smtplib
+import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -27,7 +28,7 @@ def send_auth_email(to_address: str, link: str):
                 <h1>🔗 Vincular Conta Phiz</h1>
             </div>
             <div class="body">
-                <p>Você solicitou a vinculação do seu número de celular à sua conta.</p>
+                <p>Você solicitou a vinculação da sua conta Phiz.</p>
                 <p>Clique no botão abaixo para confirmar a conexão. Este link expira em <strong>{TOKEN_EXPIRY_MINUTES} minutos</strong>.</p>
                 <a class="btn" href="{link}">Confirmar Vinculação</a>
                 <p style="font-size:13px; color:#9ca3af; margin-top:16px;">Se você não solicitou isso, ignore este e-mail.</p>
@@ -54,7 +55,12 @@ def send_auth_email(to_address: str, link: str):
     msg.attach(text_part)
     msg.attach(html_part)
 
-    with smtplib.SMTP("smtp.office365.com", 587) as server:
-        server.starttls()
+    if not FROM_EMAIL or not FROM_PASSWORD:
+        raise RuntimeError("SMTP configuration is missing")
+
+    with smtplib.SMTP("smtp.office365.com", 587, timeout=15) as server:
+        server.ehlo()
+        server.starttls(context=ssl.create_default_context())
+        server.ehlo()
         server.login(FROM_EMAIL, FROM_PASSWORD)
         server.send_message(msg)

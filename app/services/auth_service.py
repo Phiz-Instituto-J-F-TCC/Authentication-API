@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -17,6 +18,8 @@ from app.models.token_model import (
 from app.services.email_service import send_auth_email
 
 
+logger = logging.getLogger(__name__)
+
 RESEND_COOLDOWN_SECONDS = 30
 
 
@@ -29,8 +32,9 @@ class AuthError(Exception):
 
 def validate_authentication_email(email: str) -> dict:
     """Confirma se o e-mail pertence a um aluno ativo antes da vinculação."""
-    conn = get_db()
+    conn = None
     try:
+        conn = get_db()
         cur = conn.cursor()
         aluno = find_aluno_by_email(cur, email)
         if not aluno:
@@ -38,10 +42,15 @@ def validate_authentication_email(email: str) -> dict:
         return {"eligible": True}
     except AuthError:
         raise
-    except Exception:
+    except Exception as error:
+        logger.error(
+            "authentication_email_validation_failed error_type=%s",
+            type(error).__name__,
+        )
         raise AuthError(500, "Não foi possível validar o e-mail.")
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def create_authentication(email: str, phiz_id: str) -> dict:
@@ -54,11 +63,16 @@ def create_authentication(email: str, phiz_id: str) -> dict:
     if not normalized_phiz_id:
         raise AuthError(422, "Phiz ID inválido.")
 
-    validate_authentication_email(normalized_email)
-
-    conn = get_db()
+    stage = "validate_email"
+    conn = None
     try:
+        validate_authentication_email(normalized_email)
+
+        stage = "open_database"
+        conn = get_db()
         cur = conn.cursor()
+
+        stage = "find_student"
         aluno = find_aluno_by_email(cur, normalized_email)
         if not aluno:
             raise AuthError(404, "E-mail não encontrado ou está inativo.")
@@ -66,6 +80,8 @@ def create_authentication(email: str, phiz_id: str) -> dict:
         confirmation_token = secrets.token_urlsafe(48)
         polling_token = secrets.token_urlsafe(48)
         expira_em = datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRY_MINUTES)
+
+        stage = "insert_token"
         insert_token(
             cur,
             confirmation_token,
@@ -76,17 +92,28 @@ def create_authentication(email: str, phiz_id: str) -> dict:
         )
 
         link = f"{BASE_URL}/finish_authentication?token={confirmation_token}"
+        stage = "send_email"
         send_auth_email(normalized_email, link)
+
+        stage = "commit"
         conn.commit()
         return {"polling_token": polling_token}
     except AuthError:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
         raise
-    except Exception:
-        conn.rollback()
+    except Exception as error:
+        logger.error(
+            "authentication_failed stage=%s error_type=%s",
+            stage,
+            type(error).__name__,
+        )
+        if conn is not None:
+            conn.rollback()
         raise AuthError(500, "Não foi possível iniciar a confirmação. Tente novamente.")
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def get_authentication_status(polling_token: Optional[str]) -> dict:
