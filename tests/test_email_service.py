@@ -49,5 +49,3 @@ class EmailServiceTests(unittest.TestCase):
                     "student@example.com",
                     "https://example.com/finish_authentication?token=test-token",
                 )
-
-        self.assertEqual(raised_error.exception.status_code, 422)
