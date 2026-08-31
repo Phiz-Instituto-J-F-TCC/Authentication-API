@@ -65,7 +65,7 @@ class AuthenticationServiceTests(unittest.TestCase):
         ), patch.object(auth_service, "get_db", return_value=connection), patch.object(
             auth_service, "find_aluno_by_email", return_value=(1,)
         ), patch.object(auth_service, "insert_token"), patch.object(
-            auth_service, "send_auth_email", side_effect=TimeoutError
+            auth_service, "send_auth_email", side_effect=OSError(101, "Network is unreachable")
         ):
             with self.assertLogs(auth_service.logger, level="ERROR") as logs, self.assertRaises(
                 auth_service.AuthError
@@ -74,7 +74,8 @@ class AuthenticationServiceTests(unittest.TestCase):
 
         self.assertEqual(error.exception.status_code, 500)
         self.assertIn(
-            "authentication_failed stage=send_email error_type=TimeoutError",
+            "authentication_failed stage=send_email error_type=OSError "
+            "error_errno=101 error_reason=Network is unreachable",
             logs.output[0],
         )
         connection.rollback.assert_called_once()
