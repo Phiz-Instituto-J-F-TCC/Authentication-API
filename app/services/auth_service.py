@@ -104,11 +104,12 @@ def create_authentication(email: str, phiz_id: str) -> dict:
         raise
     except Exception as error:
         logger.error(
-            "authentication_failed stage=%s error_type=%s error_errno=%s error_reason=%s",
+            "authentication_failed stage=%s error_type=%s error_errno=%s error_reason=%s resend_status=%s",
             stage,
             type(error).__name__,
             getattr(error, "errno", None),
             getattr(error, "strerror", None),
+            getattr(error, "status_code", None),
         )
         if conn is not None:
             conn.rollback()
