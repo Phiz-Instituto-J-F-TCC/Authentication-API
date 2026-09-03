@@ -2,7 +2,7 @@
 
 > **API de autenticação para vinculação de contas Phiz via e-mail** — Projeto de TCC do Instituto Germinare.
 
-Uma API REST construída com **FastAPI** que implementa um fluxo seguro de autenticação por e-mail para vincular o número de celular (Phiz) à conta do aluno no sistema acadêmico.
+Uma API REST construída com **FastAPI** que implementa um fluxo seguro de autenticação por e-mail para vincular o Phiz ID à conta do aluno no sistema acadêmico.
 
 ---
 
@@ -27,7 +27,7 @@ Uma API REST construída com **FastAPI** que implementa um fluxo seguro de auten
 
 ## 🎯 Visão Geral
 
-A **Phiz Authentication API** resolve o problema de vincular o número de celular de um aluno à sua conta institucional de forma segura. O fluxo utiliza **verificação por e-mail** com tokens temporários, garantindo que apenas o proprietário do e-mail cadastrado possa realizar a vinculação.
+A **Phiz Authentication API** vincula o Phiz ID de um aluno à sua conta institucional de forma segura. O MiniApp envia apenas uma credencial temporária emitida por `pz.login`; a API deve trocá-la pelo Phiz ID exclusivamente no servidor, por meio da integração oficial do Phiz. O fluxo usa **verificação por e-mail** com tokens temporários, garantindo que apenas o proprietário do e-mail cadastrado possa concluir a vinculação.
 
 ---
 
@@ -36,19 +36,22 @@ A **Phiz Authentication API** resolve o problema de vincular o número de celula
 ```
 ┌─────────────┐     POST /authenticate      ┌──────────────┐
 │  App Phiz   │ ──────────────────────────── │   API        │
-│  (Cliente)  │   { email, numero_celular }  │   FastAPI    │
+│  (Cliente)  │ { email, phiz_login_code }   │   FastAPI    │
 └─────────────┘                              └──────┬───────┘
                                                     │
                                           1. Valida se o email
                                              existe na tabela Aluno
                                                     │
-                                          2. Gera token seguro
+                                          2. Troca a credencial temporária
+                                             pelo Phiz ID no servidor
+                                                    │
+                                          3. Gera token seguro
                                              (secrets.token_urlsafe)
                                                     │
-                                          3. Salva token no banco
+                                          4. Salva Phiz ID e token no banco
                                              (expira em 30 min)
                                                     │
-                                          4. Envia e-mail com
+                                          5. Envia e-mail com
                                              link de confirmação
                                                     │
                                                     ▼
@@ -61,19 +64,19 @@ A **Phiz Authentication API** resolve o problema de vincular o número de celula
                                                │   FastAPI    │
                                                └──────┬───────┘
                                                       │
-                                            5. Valida token:
+                                            6. Valida token:
                                                - Existe?
                                                - Já foi usado?
                                                - Expirou?
                                                       │
-                                            6. Atualiza numero_phiz
+                                            7. Atualiza phiz_id
                                                na tabela Aluno
                                                       │
-                                            7. Marca token como
+                                            8. Marca token como
                                                utilizado
                                                       │
                                                       ▼
-                                            8. Retorna página HTML
+                                            9. Retorna página HTML
                                                de sucesso ou erro
 ```
 
@@ -288,7 +291,7 @@ O projeto utiliza **PostgreSQL** com o seguinte modelo de dados principal:
 
 | Tabela | Descrição |
 |---|---|
-| `Aluno` | Cadastro de alunos (id, nome, numero_phiz, email, ativo) |
+| `Aluno` | Cadastro de alunos (id, nome, phiz_id, email, ativo) |
 | `Professor` | Cadastro de professores |
 | `Coordenador` | Cadastro de coordenadores |
 | `Serie` | Séries (ano de início) |
@@ -310,8 +313,9 @@ O projeto utiliza **PostgreSQL** com o seguinte modelo de dados principal:
 CREATE TABLE IF NOT EXISTS "Token_Autenticacao" (
     "id"              INTEGER NOT NULL GENERATED BY DEFAULT AS IDENTITY,
     "token"           VARCHAR(255) NOT NULL UNIQUE,
+    "polling_token"   VARCHAR(255) NOT NULL UNIQUE,
     "email"           VARCHAR(255) NOT NULL,
-    "numero_celular"  VARCHAR(255) NOT NULL,
+    "phiz_id"         VARCHAR(255) NOT NULL,
     "criado_em"       TIMESTAMP NOT NULL DEFAULT NOW(),
     "expira_em"       TIMESTAMP NOT NULL,
     "utilizado"       BOOLEAN NOT NULL DEFAULT FALSE,
@@ -323,6 +327,7 @@ CREATE TABLE IF NOT EXISTS "Token_Autenticacao" (
 
 - **`dataabase.sql`** — Schema completo com todas as tabelas e foreign keys
 - **`migration_auth_token.sql`** — Migration para criar a tabela `Token_Autenticacao`
+- **`migration_replace_phone_with_phiz_id.sql`** — Migration incremental de telefone para Phiz ID
 
 ---
 
@@ -330,20 +335,20 @@ CREATE TABLE IF NOT EXISTS "Token_Autenticacao" (
 
 ### `POST /authenticate`
 
-Inicia o fluxo de autenticação. Valida o e-mail do aluno, gera um token e envia um e-mail com o link de confirmação.
+Inicia o fluxo de autenticação. A API valida o e-mail, troca a credencial temporária pelo Phiz ID no servidor, gera um token e envia o link de confirmação por e-mail. Enquanto a integração oficial de identidade do Phiz não estiver configurada, o endpoint retorna `501` sem persistir a credencial e sem enviar e-mail.
 
 **Request Body:**
 ```json
 {
   "email": "aluno@institutojef.org.br",
-  "numero_celular": "11999999999"
+  "phiz_login_code": "credencial-temporaria-do-phiz"
 }
 ```
 
 **Response (200):**
 ```json
 {
-  "message": "E-mail de autenticação enviado com sucesso."
+  "polling_token": "token-opaco-para-acompanhar-a-confirmacao"
 }
 ```
 
@@ -352,13 +357,15 @@ Inicia o fluxo de autenticação. Valida o e-mail do aluno, gera um token e envi
 | Status | Descrição |
 |---|---|
 | `404` | Aluno não encontrado ou inativo |
+| `422` | Credencial temporária do Phiz ausente ou inválida |
+| `501` | Integração oficial de identidade do Phiz ainda não configurada |
 | `500` | Erro interno do servidor |
 
 ---
 
 ### `GET /finish_authentication?token={token}`
 
-Finaliza o fluxo de autenticação. Valida o token recebido e vincula o número de celular ao aluno.
+Finaliza o fluxo de autenticação. Valida o token recebido e vincula o Phiz ID ao aluno.
 
 **Query Parameters:**
 

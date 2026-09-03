@@ -10,27 +10,52 @@ def find_aluno_by_email(cur, email: str):
     return cur.fetchone()
 
 
-def insert_token(cur, token: str, email: str, numero_celular: str, expira_em: datetime)-> int:
+def insert_token(
+    cur,
+    token: str,
+    polling_token: str,
+    email: str,
+    phiz_id: str,
+    expira_em: datetime,
+) -> int:
     """Insere um novo token de autenticação."""
     cur.execute(
-        'INSERT INTO "Token_Autenticacao" ("token", "email", "numero_celular", "expira_em") VALUES (%s, %s, %s, %s) RETURNING "id"',
-        (token, email, numero_celular, expira_em),
+        'INSERT INTO "Token_Autenticacao" ("token", "polling_token", "email", "phiz_id", "expira_em") VALUES (%s, %s, %s, %s, %s) RETURNING "id"',
+        (token, polling_token, email, phiz_id, expira_em),
     )
     return cur.fetchone()[0]
 
-def find_authentication_status(cur, email: str, numero_celular: str):
+def find_authentication_status(cur, polling_token: str):
     """Buscar o status de uma solicitação sem expor o token de confirmação"""
-    cur.execute('SELECT utilizado FROM "Token_Autenticacao" WHERE email = %s AND numero_celular = %s ORDER BY criado_em DESC LIMIT 1', (email, numero_celular))
-    
-    result = cur.fetchone()
-    return result
+    cur.execute(
+        'SELECT "utilizado", "expira_em" FROM "Token_Autenticacao" WHERE "polling_token" = %s',
+        (polling_token,),
+    )
+    return cur.fetchone()
+
+
+def find_authentication_for_resend(cur, polling_token: str):
+    """Busca a solicitação pendente autorizada pelo token opaco de polling."""
+    cur.execute(
+        'SELECT "id", "email", "utilizado", "criado_em" FROM "Token_Autenticacao" WHERE "polling_token" = %s FOR UPDATE',
+        (polling_token,),
+    )
+    return cur.fetchone()
+
+
+def renew_token(cur, token_id: int, token: str, expira_em: datetime):
+    """Substitui o link de confirmação sem expor a identidade vinculada."""
+    cur.execute(
+        'UPDATE "Token_Autenticacao" SET "token" = %s, "expira_em" = %s, "utilizado" = FALSE, "criado_em" = NOW() WHERE "id" = %s',
+        (token, expira_em, token_id),
+    )
 
 
 def find_token(cur, token: str):
     """Busca um token de autenticação pelo valor do token."""
     cur.execute(
         """
-        SELECT "id", "email", "numero_celular", "expira_em", "utilizado"
+        SELECT "id", "email", "phiz_id", "expira_em", "utilizado"
         FROM "Token_Autenticacao"
         WHERE "token" = %s
         """,
@@ -47,9 +72,9 @@ def mark_token_as_used(cur, token_id: int):
     )
 
 
-def update_aluno_numero_phiz(cur, email: str, numero_phiz: str):
-    """Atualiza o numero_phiz do aluno pelo email."""
+def update_aluno_phiz_id(cur, email: str, phiz_id: str):
+    """Atualiza o Phiz ID do aluno pelo e-mail."""
     cur.execute(
-        'UPDATE "Aluno" SET "numero_phiz" = %s WHERE "email" = %s',
-        (numero_phiz, email),
+        'UPDATE "Aluno" SET "phiz_id" = %s WHERE "email" = %s',
+        (phiz_id, email),
     )

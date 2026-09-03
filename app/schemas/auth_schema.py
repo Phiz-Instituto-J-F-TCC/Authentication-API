@@ -2,6 +2,11 @@ from pydantic import BaseModel
 
 
 class AuthRequest(BaseModel):
-    """Schema de entrada para o endpoint de autenticação."""
+    """Dados necessários para iniciar a confirmação da vinculação."""
     email: str
-    numero_celular: str
+    phiz_id: str
+
+
+class AuthenticationEmailStatusRequest(BaseModel):
+    """Schema para validar se o e-mail pode iniciar a autenticação."""
+    email: str
